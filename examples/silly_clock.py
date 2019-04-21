@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import os
-import sys
 import time
 from datetime import datetime
 
@@ -44,6 +43,14 @@ def animation(device, from_y, to_y):
 
 
 def main():
+    # Check whether we configured the environment with an OpenWeatherMap key.
+    if 'OPENWEATHERMAP_APIKEY' in os.environ:
+        openWeatherMapKey = os.environ['OPENWEATHERMAP_APIKEY']
+        bOpenWeatherMap = True
+    else:
+        print("No OpenWeather key found (env var OPENWEATHERMAP_APIKEY). Disabling temperature reports...")
+        bOpenWeatherMap = False
+
     # Setup for Banggood version of 4 x 8x8 LED Matrix (https://bit.ly/2Gywazb)
     serial = spi(port=0, device=0, gpio=noop())
     device = max7219(serial, cascaded=4, block_orientation=-90, blocks_arranged_in_reverse_order=True)
@@ -53,29 +60,48 @@ def main():
     animation(device, 8, 1)
 
     toggle = False  # Toggle the second indicator every second
+
+    def getTemperature():
+        if not bOpenWeatherMap:
+            return "N/A"
+        cmd = "curl -s 'https://api.openweathermap.org/data/2.5/weather?q=Leiden,NL&appid="
+        cmd += openWeatherMapKey + "&units=metric' | json_pp | grep temp..:"
+        try:
+            newTemperature = os.popen('bash -c "' + cmd + '"').readlines()[0]
+            return newTemperature.split()[-1].replace(',', '') + 'C'
+        except Exception:
+            return temperature
+    temperature = getTemperature()
     while True:
         toggle = not toggle
-        sec = datetime.now().second
-        if sec == 59:
+        n = datetime.now()
+        if bOpenWeatherMap and n.minute % 5 == 0:
+            temperature = getTemperature()
+        if n.second == 59:
             # When we change minutes, animate the minute change
             minute_change(device)
-        elif sec == 30:
+        elif n.second == 30:
             # Half-way through each minute, display the complete date/time,
             # animating the time display into and out of the abyss.
             full_msg = time.ctime()
             animation(device, 1, 8)
             show_message(device, full_msg, fill="white", font=proportional(CP437_FONT))
             animation(device, 8, 1)
+        elif bOpenWeatherMap and n.second % 15 == 0:
+            # Show temperature (if an OpenWeatherMap key was configured in the env)
+            animation(device, 1, 8)
+            show_message(device, "Temperature: " + temperature, fill="white", font=proportional(CP437_FONT))
+            animation(device, 8, 1)
         else:
-            # Do the following twice a second (so the seconds' indicator blips).
-            # I'd optimize if I had to - but what's the point?
-            # Even my Raspberry PI2 can do this at 4% of a single one of the 4 cores!
+            # Most of the time, do this update. Now, I'd optimize this if I had to ;
+            # but even my Raspberry PI2 can do this at 4% of a single one... of the 4 cores!
             hours = datetime.now().strftime('%H')
             minutes = datetime.now().strftime('%M')
             with canvas(device) as draw:
                 text(draw, (0, 1), hours, fill="white", font=proportional(CP437_FONT))
                 text(draw, (15, 1), ":" if toggle else " ", fill="white", font=proportional(TINY_FONT))
                 text(draw, (17, 1), minutes, fill="white", font=proportional(CP437_FONT))
+            # Do this twice each second (to blink the hour/minute indicator - i.e. ':')
             time.sleep(0.5)
 
 
